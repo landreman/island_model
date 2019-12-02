@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+
+import numpy as np
+
+# Input parameters:
+
+# R0 = Radius of the circular wire
+R0 = 1.0
+
+# IZ = Current flowing in the wire along the Z axis
+IZ = 1.0e6
+
+# iota_a = target value of rotational transform
+iota_a = 0.5
+
+# a = minor radius at which you want iota to equal the target iota_a
+a = 0.001
+
+# R_iota0 = array of R values at which to compute iota for the unperturbed field.
+R_iota0 = R0 + a * np.linspace(0.2, 2, num=40, endpoint=True)
+#R_iota0 = np.linspace(R0 - a, R0, num=1, endpoint=False)
+
+#############################################################
+# End of input parameters
+#############################################################
+
+from scipy.special import ellipe, ellipk
+from scipy.integrate import solve_ivp
+import matplotlib.pyplot as plt
+
+mu0 = 4 * np.pi * (1.0e-7)
+
+# Validation:
+if a <= 0:
+   print("a must be positive.")
+   exit(1)
+
+if R0 <= 0:
+   print("R0 must be positive.")
+   exit(1)
+
+if a >= R0:
+   print("a must be < R0.")
+   exit(1)
+
+# Iphi = current in the circular wire:
+Iphi = -IZ * iota_a * a * a / (R0 * R0)
+
+# For details of scipy.integrate.solve_ivp see https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html
+
+def BR_BZ(R,Z):
+   r2 = (R - R0) * (R - R0) + Z * Z
+   beta = np.sqrt(R0 * R0 + R * R + Z * Z + 2 * R0 * R)
+   k2 = 1 - r2 / (beta*beta)
+   E = ellipe(k2)
+   K = ellipk(k2)
+   factor = mu0 * Iphi / (2* np.pi* r2 * beta)
+   BR = factor * (Z / R) * ((R0*R0 + R*R + Z*Z) * E - r2 * K)
+   BZ = factor * ((R0*R0 - R*R - Z*Z) * E + r2 * K)
+   return BR, BZ
+
+def d_RZ_d_phi(phi, RZ):
+   R = RZ[0]
+   Z = RZ[1]
+   
+   Bphi = mu0 * IZ / (2 * np.pi * R)
+
+   r2 = (R - R0) * (R - R0) + Z * Z
+   beta = np.sqrt(R0 * R0 + R * R + Z * Z + 2 * R0 * R)
+   k2 = 1 - r2 / (beta*beta)
+   E = ellipe(k2)
+   K = ellipk(k2)
+   factor = mu0 * Iphi / (2* np.pi* r2 * beta)
+   BR = factor * (Z / R) * ((R0*R0 + R*R + Z*Z) * E - r2 * K)
+   BZ = factor * ((R0*R0 - R*R - Z*Z) * E + r2 * K)
+
+   d_R_d_phi = R * BR / Bphi
+   d_Z_d_phi = R * BZ / Bphi
+   return [d_R_d_phi, d_Z_d_phi]
+
+def Z_crosses_0(phi, RZ):
+   return RZ[1]
+
+Z_crosses_0.terminal = True
+if iota_a > 0:
+   Z_crosses_0.direction = -1.0
+else:
+   Z_crosses_0.direction = 1.0
+
+# Compare the full expressions for BR and BZ to the approximate expressions close to the circular wire:
+if False:
+   r = np.linspace(0.001,0.01,30)
+   Z = -r
+   BR_vert, BZ_vert = BR_BZ(R0, Z)
+   print("BR_vert:",BR_vert)
+   print("BZ_vert:",BZ_vert)
+   BR_vert_analytic = mu0*Iphi/(2*np.pi*Z)
+
+   R = R0 + r
+   BR_horiz, BZ_horiz = BR_BZ(R, 0)
+   print("BR_horiz:",BR_horiz)
+   print("BZ_horiz:",BZ_horiz)
+   BR_horiz_analytic = mu0*Iphi/(2*np.pi*r)
+   R = R0 - r
+   BR_horiz2, BZ_horiz2 = BR_BZ(R, 0)
+   print("BR_horiz2:",BR_horiz2)
+   print("BZ_horiz2:",BZ_horiz2)
+
+   plt.figure(figsize=(14,7))
+   plt.plot(r,BR_vert,'.-',label='BR_vert')
+   plt.plot(r,BZ_vert,'.-',label='BZ_vert')
+   plt.plot(r,BR_horiz,'.-',label='BR_horiz')
+   plt.plot(r,BZ_horiz,'.-',label='BZ_horiz')
+   plt.plot(r,BR_horiz2,'.-',label='BR_horiz2')
+   plt.plot(r,-BZ_horiz2,'.-',label='-BZ_horiz2')
+   plt.plot(r,BR_vert_analytic,'x-',label='BR_vert_analytic')
+   plt.legend(fontsize=8,loc=0)
+   plt.xlabel('r')
+   plt.show()
+   exit(0)
+
+# Compare the expression for B from the circular wire to the analytic formula on the Z axis:
+if False:
+   Z = np.linspace(-3.0,3.0,40)
+   R = 0.0001
+   BR, BZ = BR_BZ(R,Z)
+   # Eq (5.38) in Griffiths:
+   BZ_analytic = mu0 * Iphi * R0 * R0 / (2 * ((R0 * R0 + Z * Z) ** 1.5))
+
+   plt.figure(figsize=(14,7))
+   plt.plot(Z,BR,'.-',label='BR')
+   plt.plot(Z,BZ,'.-',label='BZ')
+   plt.plot(Z,BZ_analytic,'x',label='BZ_analytic')
+   plt.legend(fontsize=8,loc=0)
+   plt.xlabel('Z')
+   plt.show()
+   exit(0)
+   
+
+# Find the iota profile for the unperturbed field
+r = np.abs(R_iota0 - R0)
+iota0_analytic = - Iphi * R0 * R0 / (IZ * r * r)
+#print("R_iota0: ",R_iota0)
+#print("iota0_analytic: ",iota0_analytic)
+
+iota0_numerical = np.zeros(len(R_iota0))
+statuss = [999]*len(R_iota0)
+successes = [999]*len(R_iota0)
+for j in range(len(R_iota0)):
+   phi_range = [0, 2*np.pi*100]
+   RZ_initial = [R_iota0[j], 0]
+   solution = solve_ivp(d_RZ_d_phi, phi_range, RZ_initial, events=Z_crosses_0)
+
+   #print("status:",solution.status)
+   #print("success:",solution.success)
+   statuss[j] = solution.status
+   successes[j] = solution.success
+   phi = solution.t
+   R = solution.y[0,:]
+   Z = solution.y[1,:]
+   #print("phi:",solution.t)
+   #print("[R,Z]:",solution.y)
+   #print("R:",R)
+   #print("Z:",Z)
+   
+   if False:
+      fig = plt.figure(figsize=(14,7))
+      plt.plot(phi,R,'.-',label='R')
+      plt.plot(phi,Z,'.-',label='Z')
+      plt.legend(fontsize=8,loc=0)
+      plt.xlabel('phi')
+
+      plt.show()
+
+   # If solve_ivp successfully integrated halfway around poloidally, then the final element of solution.t should tell us iota.
+   if solution.success and (np.abs(Z[-1]) < 1.0e-14):
+      iota0_numerical[j] = np.pi / phi[-1]
+   else:
+      iota0_numerical[j] = np.nan
+
+print('statuss:',statuss)
+print('successes:',successes)
+print("iota0_numerical:",iota0_numerical)
+fig = plt.figure(figsize=(14,7))
+numRows=1
+numCols=2
+
+plt.subplot(numRows,numCols,1)
+plt.semilogy(R_iota0, iota0_analytic, '.-', label='analytic')
+plt.plot(R_iota0, iota0_numerical, '.-', label='numerical')
+plt.legend(fontsize=8,loc=0)
+plt.xlabel('Initial R')
+plt.ylabel('iota (log scale)')
+
+plt.subplot(numRows,numCols,2)
+plt.plot(R_iota0, iota0_analytic, '.-', label='analytic')
+plt.plot(R_iota0, iota0_numerical, '.-', label='numerical')
+plt.legend(fontsize=8,loc=0)
+plt.xlabel('Initial R')
+plt.ylabel('iota (linear scale)')
+
+plt.show()
