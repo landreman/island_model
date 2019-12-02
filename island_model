@@ -13,37 +13,59 @@ R0 = 1.0
 IZ = 1.0e6
 
 # iota_a = target value of rotational transform
-iota_a = 0.5
+iota_a = 2
 
 # a = minor radius at which you want iota to equal the target iota_a
 a = 0.01
 
-# R_iota0 = array of R values at which to compute iota for the unperturbed field.
-R_iota0 = R0 + a * np.linspace(0.2, 2, num=40, endpoint=True)
-#R_iota0 = np.linspace(R0 - a, R0, num=1, endpoint=False)
-
 # nfp = number of field periods
-nfp = 3
+nfp = 6
+
+# Mode numbers of the Dommaschk potential
+#Dommaschk_m = 6
+#Dommaschk_n = 3
+Dommaschk_m = 3
+Dommaschk_n = 6
+
+# Amplitude of the Dommaschk potential
+Dommaschk_amplitude = 1
 
 # Initial locations for tracing field lines for the Poincare plot
-R_initial_Poincare = R0 + a * np.linspace(0.5, 1.5, num=6, endpoint=True)
+R_initial_Poincare = R0 - a * np.linspace(0.8, 1.2, num=50, endpoint=True)
 Z_initial_Poincare = [0]
 
+# R_iota0 = array of R values at which to compute iota for the unperturbed field.
+#R_iota0 = R0 + a * np.linspace(0.2, 2, num=40, endpoint=True)
+#R_iota0 = np.linspace(R0 - a, R0, num=1, endpoint=False)
+R_iota0 = R_initial_Poincare
+
 # Number of points to compute for each initial condition for the Poincare plot:
-N_points = 300
+N_points = 3000
 
 # Absolute and relative tolerances for field line tracing.
 # Defaults are rtol = 1e-3 and atol = 1e-6
-rtol = 1e-7
-atol = 1e-10
+rtol = 1e-8
+atol = 1e-11
+
+# Size of points in Poincare plot
+marker_size = 1
 
 #############################################################
 # End of input parameters
 #############################################################
 
+print()
+print('Include any arguments to save a PDF')
+
+import sys
+save_PDF = False
+if len(sys.argv) > 1:
+   save_PDF = True
+
 from scipy.special import ellipe, ellipk
 from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
+import Dommaschk
 
 mu0 = 4 * np.pi * (1.0e-7)
 
@@ -76,7 +98,7 @@ def BR_BZ(R,Z):
    BZ = factor * ((R0*R0 - R*R - Z*Z) * E + r2 * K)
    return BR, BZ
 
-def d_RZ_d_phi(phi, RZ):
+def d_RZ_d_phi_unperturbed(phi, RZ):
    R = RZ[0]
    Z = RZ[1]
    
@@ -95,14 +117,41 @@ def d_RZ_d_phi(phi, RZ):
    d_Z_d_phi = R * BZ / Bphi
    return [d_R_d_phi, d_Z_d_phi]
 
+def d_RZ_d_phi_perturbed(phi, RZ):
+   R = RZ[0]
+   Z = RZ[1]
+   
+   Bphi = mu0 * IZ / (2 * np.pi * R) + Dommaschk_amplitude * Dommaschk.Bphi(Dommaschk_n,Dommaschk_m,R,Z,phi)
+
+   r2 = (R - R0) * (R - R0) + Z * Z
+   beta = np.sqrt(R0 * R0 + R * R + Z * Z + 2 * R0 * R)
+   k2 = 1 - r2 / (beta*beta)
+   E = ellipe(k2)
+   K = ellipk(k2)
+   factor = mu0 * Iphi / (2* np.pi* r2 * beta)
+   BR = factor * (Z / R) * ((R0*R0 + R*R + Z*Z) * E - r2 * K)  + Dommaschk_amplitude * Dommaschk.BR(Dommaschk_n,Dommaschk_m,R,Z,phi)
+   BZ = factor * ((R0*R0 - R*R - Z*Z) * E + r2 * K) + Dommaschk_amplitude * Dommaschk.BZ(Dommaschk_n,Dommaschk_m,R,Z,phi)
+
+   if False:
+      print('Terms in BR:')
+      print('  Wires:    ',factor * (Z / R) * ((R0*R0 + R*R + Z*Z) * E - r2 * K))
+      print('  Dommaschk:',Dommaschk_amplitude * Dommaschk.BR(Dommaschk_n,Dommaschk_m,R,Z,phi))
+      print('Terms in BR:')
+      print('  Wires:    ',factor * ((R0*R0 - R*R - Z*Z) * E + r2 * K))
+      print('  Dommaschk:',Dommaschk_amplitude * Dommaschk.BZ(Dommaschk_n,Dommaschk_m,R,Z,phi))
+      print('Terms in Bphi:')
+      print('  Wires:    ',mu0 * IZ / (2 * np.pi * R))
+      print('  Dommaschk:', Dommaschk_amplitude * Dommaschk.Bphi(Dommaschk_n,Dommaschk_m,R,Z,phi))
+      exit(0)
+
+   d_R_d_phi = R * BR / Bphi
+   d_Z_d_phi = R * BZ / Bphi
+   return [d_R_d_phi, d_Z_d_phi]
+
 def Z_crosses_0(phi, RZ):
    return RZ[1]
 
 Z_crosses_0.terminal = True
-if iota_a > 0:
-   Z_crosses_0.direction = -1.0
-else:
-   Z_crosses_0.direction = 1.0
 
 # Compare the full expressions for BR and BZ to the approximate expressions close to the circular wire:
 if False:
@@ -169,7 +218,18 @@ successes = [999]*len(R_iota0)
 for j in range(len(R_iota0)):
    phi_range = [0, 2*np.pi*100]
    RZ_initial = [R_iota0[j], 0]
-   solution = solve_ivp(d_RZ_d_phi, phi_range, RZ_initial, events=Z_crosses_0, rtol = rtol, atol = atol)
+   if RZ_initial[0] > R0:
+      if iota_a > 0:
+         Z_crosses_0.direction = -1.0
+      else:
+         Z_crosses_0.direction = 1.0
+   else:
+      if iota_a > 0:
+         Z_crosses_0.direction = 1.0
+      else:
+         Z_crosses_0.direction = -1.0
+
+   solution = solve_ivp(d_RZ_d_phi_unperturbed, phi_range, RZ_initial, events=Z_crosses_0, rtol = rtol, atol = atol)
 
    #print("status:",solution.status)
    #print("success:",solution.success)
@@ -233,7 +293,7 @@ for jZ in range(len(Z_initial_Poincare)):
       phi_range = (0, (2*np.pi*N_points)/nfp)
       phi_to_report = np.arange(N_points) * 2 * np.pi / nfp
       RZ_initial = [R_initial_Poincare[jR], Z_initial_Poincare[jZ]]
-      solution = solve_ivp(d_RZ_d_phi, phi_range, RZ_initial, t_eval = phi_to_report, rtol = rtol, atol = atol)
+      solution = solve_ivp(d_RZ_d_phi_perturbed, phi_range, RZ_initial, t_eval = phi_to_report, rtol = rtol, atol = atol)
       phi = solution.t
       R = solution.y[0,:]
       Z = solution.y[1,:]
@@ -245,11 +305,22 @@ for jZ in range(len(Z_initial_Poincare)):
 
 fig = plt.figure(figsize=(14,7))
 for j in range(N_field_lines):
-   plt.plot(Poincare_data[j][0,:], Poincare_data[j][1,:], '.')
+   plt.scatter(Poincare_data[j][0,:], Poincare_data[j][1,:], s=marker_size, edgecolors='none')
 plt.xlabel('R')
 plt.ylabel('Z')
 plt.gca().set_aspect('equal',adjustable='box')
 
-plt.figtext(0.5, 0.99, 'Rtol = '+str(rtol)+'   Atol = '+str(atol), fontsize=10, ha='center', va='top')
+title_string = 'Dommaschk_m='+str(Dommaschk_m)+', Dommaschk_n='+str(Dommaschk_n)+', Dommaschk_amplitude='+str(Dommaschk_amplitude)\
+    +', iota_a='+str(iota_a)+', a='+str(a)+', nfp='+str(nfp)+', Rtol='+str(rtol)+', Atol='+str(atol)
+plt.figtext(0.5, 0.99, title_string, fontsize=10, ha='center', va='top')
 
-plt.show()
+filename = 'Poincare_m'+str(Dommaschk_m)+'_n'+str(Dommaschk_n)+'_amplitude'+str(Dommaschk_amplitude) \
+    +'_iotaa'+str(iota_a)+'_a'+str(a)+'_nfp'+str(nfp)+'_rtol'+str(rtol)+'_atol'+str(atol) \
+    +'_Npoints'+str(N_points)+'_Nlines'+str(N_field_lines)+'.pdf'
+print(filename)
+
+if save_PDF:
+   print('Saving PDF')
+   plt.savefig(filename)
+else:
+   plt.show()
