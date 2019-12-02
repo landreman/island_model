@@ -2,7 +2,9 @@
 
 import numpy as np
 
+#############################################################
 # Input parameters:
+#############################################################
 
 # R0 = Radius of the circular wire
 R0 = 1.0
@@ -14,11 +16,26 @@ IZ = 1.0e6
 iota_a = 0.5
 
 # a = minor radius at which you want iota to equal the target iota_a
-a = 0.001
+a = 0.01
 
 # R_iota0 = array of R values at which to compute iota for the unperturbed field.
 R_iota0 = R0 + a * np.linspace(0.2, 2, num=40, endpoint=True)
 #R_iota0 = np.linspace(R0 - a, R0, num=1, endpoint=False)
+
+# nfp = number of field periods
+nfp = 3
+
+# Initial locations for tracing field lines for the Poincare plot
+R_initial_Poincare = R0 + a * np.linspace(0.5, 1.5, num=6, endpoint=True)
+Z_initial_Poincare = [0]
+
+# Number of points to compute for each initial condition for the Poincare plot:
+N_points = 300
+
+# Absolute and relative tolerances for field line tracing.
+# Defaults are rtol = 1e-3 and atol = 1e-6
+rtol = 1e-7
+atol = 1e-10
 
 #############################################################
 # End of input parameters
@@ -137,7 +154,10 @@ if False:
    exit(0)
    
 
+#############################################################
 # Find the iota profile for the unperturbed field
+#############################################################
+
 r = np.abs(R_iota0 - R0)
 iota0_analytic = - Iphi * R0 * R0 / (IZ * r * r)
 #print("R_iota0: ",R_iota0)
@@ -149,7 +169,7 @@ successes = [999]*len(R_iota0)
 for j in range(len(R_iota0)):
    phi_range = [0, 2*np.pi*100]
    RZ_initial = [R_iota0[j], 0]
-   solution = solve_ivp(d_RZ_d_phi, phi_range, RZ_initial, events=Z_crosses_0)
+   solution = solve_ivp(d_RZ_d_phi, phi_range, RZ_initial, events=Z_crosses_0, rtol = rtol, atol = atol)
 
    #print("status:",solution.status)
    #print("success:",solution.success)
@@ -198,5 +218,38 @@ plt.plot(R_iota0, iota0_numerical, '.-', label='numerical')
 plt.legend(fontsize=8,loc=0)
 plt.xlabel('Initial R')
 plt.ylabel('iota (linear scale)')
+
+#############################################################
+# Generate Poincare plot
+#############################################################
+
+N_field_lines = len(R_initial_Poincare) * len(Z_initial_Poincare)
+Poincare_data = []
+j = 0
+for jZ in range(len(Z_initial_Poincare)):
+   for jR in range(len(R_initial_Poincare)):
+      j += 1
+      print('Tracing field line {:4d} of {:4d}.'.format(j, N_field_lines))
+      phi_range = (0, (2*np.pi*N_points)/nfp)
+      phi_to_report = np.arange(N_points) * 2 * np.pi / nfp
+      RZ_initial = [R_initial_Poincare[jR], Z_initial_Poincare[jZ]]
+      solution = solve_ivp(d_RZ_d_phi, phi_range, RZ_initial, t_eval = phi_to_report, rtol = rtol, atol = atol)
+      phi = solution.t
+      R = solution.y[0,:]
+      Z = solution.y[1,:]
+      #print("phi:",solution.t)
+      #print("[R,Z]:",solution.y)
+      #print("R:",R)
+      #print("Z:",Z)
+      Poincare_data.append(solution.y)
+
+fig = plt.figure(figsize=(14,7))
+for j in range(N_field_lines):
+   plt.plot(Poincare_data[j][0,:], Poincare_data[j][1,:], '.')
+plt.xlabel('R')
+plt.ylabel('Z')
+plt.gca().set_aspect('equal',adjustable='box')
+
+plt.figtext(0.5, 0.99, 'Rtol = '+str(rtol)+'   Atol = '+str(atol), fontsize=10, ha='center', va='top')
 
 plt.show()
