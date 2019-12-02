@@ -40,7 +40,7 @@ Z_initial_Poincare = [0]
 R_iota0 = R_initial_Poincare
 
 # Number of points to compute for each initial condition for the Poincare plot:
-N_points = 30
+N_points = 10
 
 # Absolute and relative tolerances for field line tracing.
 # Defaults are rtol = 1e-3 and atol = 1e-6
@@ -339,6 +339,12 @@ if mpi_rank == 0:
    plt.xlabel('R')
    plt.ylabel('Z')
    plt.gca().set_aspect('equal',adjustable='box')
+   # Turn on minor ticks, since it is necessary to get minor grid lines
+   from matplotlib.ticker import AutoMinorLocator
+   plt.gca().xaxis.set_minor_locator(AutoMinorLocator(10))
+   plt.gca().yaxis.set_minor_locator(AutoMinorLocator(10))
+   plt.grid(which='major',linewidth=0.5)
+   plt.grid(which='minor',linewidth=0.15)
 
    title_string = 'Dommaschk_m='+str(Dommaschk_m)+', Dommaschk_n='+str(Dommaschk_n)+', Dommaschk_amplitude='+str(Dommaschk_amplitude)\
        +', iota_a='+str(iota_a)+', a='+str(a)+', nfp='+str(nfp)+', Rtol='+str(rtol)+', Atol='+str(atol)+', N_procs='+str(mpi_N_procs)
