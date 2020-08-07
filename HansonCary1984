@@ -1,0 +1,442 @@
+#!/usr/bin/env python3
+
+import numpy as np
+
+#############################################################
+# Input parameters:
+#############################################################
+
+# Equation numbers refer to Hanson & Cary, Physics of Fluids (1984)
+
+# Number of field periods, and m0 in eq (6)
+m0 = 5.0
+
+# l0 in eq (6), "the dominant poloidal field harmonics number"
+l0 = 2.0
+
+# Number of 2pi periods in toroidal angle to follow the coil
+n2pi = 2.0
+
+# R0 = mean major radius
+R0 = 1.0
+
+# r = minor radius of winding surface
+r = 0.3
+
+# B0 = Mean toroidal magnetic field in Tesla
+B0 = 1.0
+
+# Currents of the two coils
+I = -np.array([-1, 1]) * 0.021
+#I = np.array([-1, 1]) * 0.0
+
+# Number of coils
+N_coils = len(I)
+
+# Axis location at phi=0:
+R_axis = 0.98
+
+# Initial locations for tracing field lines for the Poincare plot
+R_initial_Poincare = np.linspace(0.98, 1.1, num=4, endpoint=True)
+Z_initial_Poincare = [0]
+
+# R_iota0 = array of R values at which to compute iota for the unperturbed field.
+#R_iota0 = R_initial_Poincare
+#R_iota0 = np.linspace(0.99, 1.05, num=4, endpoint=True)
+R_iota0 = np.linspace(0.975, 1.05, num=10, endpoint=True)
+
+# Number of points to compute for each initial condition for the Poincare plot:
+N_points = 200
+
+# N_phi = number of points in the phi grid, which ranges over [0, 2*pi*n2pi)
+N_phi = 400
+
+# Absolute and relative tolerances for field line tracing.
+# Defaults are rtol = 1e-3 and atol = 1e-6
+#rtol = 1e-8
+#atol = 1e-11
+
+rtol = 1e-6
+atol = 1e-9
+
+# Size of points in Poincare plot
+marker_size = 1
+
+#############################################################
+# End of input parameters
+#############################################################
+
+#print()
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+mpi_N_procs = comm.Get_size()
+mpi_rank = comm.Get_rank()
+print('Hello from MPI proc {:4d} of {:4d}'.format(mpi_rank,mpi_N_procs))
+if mpi_rank==0:
+   print('Include any arguments to save a PDF')
+
+import sys
+save_PDF = False
+if len(sys.argv) > 1:
+   save_PDF = True
+   import matplotlib
+   matplotlib.use('PDF')
+
+#from scipy.special import ellipe, ellipk
+from scipy.integrate import solve_ivp
+import matplotlib.pyplot as plt
+#import Dommaschk
+
+phi = np.linspace(0, 2 * np.pi * n2pi, N_phi, endpoint=False)
+d_phi = phi[1] - phi[0]
+phi_big = np.kron(np.ones((N_coils, 1)), phi).transpose()
+cosphi = np.cos(phi_big)
+sinphi = np.sin(phi_big)
+eta = np.zeros((N_phi, N_coils))
+eta[:, 0] = m0 * phi / l0
+eta[:, 1] = m0 * phi / l0 + np.pi / 2
+coseta = np.cos(eta)
+sineta = np.sin(eta)
+R_coil = R0 + r * coseta
+X_coil = R_coil * cosphi
+Y_coil = R_coil * sinphi
+#Z_coil = r * sineta
+Z_coil = -r * sineta
+
+if False:
+   print()
+   print("phi:")
+   print(phi)
+   print()
+   print("phi_big:")
+   print(phi_big)
+   print()
+   print("sinphi:")
+   print(sinphi)
+   print()
+   print("cosphi:")
+   print(cosphi)
+   print()
+   print("eta:")
+   print(eta)
+   print()
+   print("R_coil:")
+   print(R_coil)
+   print()
+   print("Z_coil:")
+   print(Z_coil)
+   exit(0)
+
+#X = (R0 + r * coseta) * cosphi
+#Y = (R0 + r * coseta) * sinphi
+d_X_d_phi_coil = R_coil * (-sinphi) + r * sineta * (-m0 / l0) * cosphi
+d_Y_d_phi_coil = R_coil * cosphi + r * sineta * (-m0 / l0) * sinphi
+#d_Z_d_phi_coil = r * coseta * (m0 / l0)
+d_Z_d_phi_coil = -r * coseta * (m0 / l0)
+
+d_l_d_phi_coil = np.sqrt( \
+   d_X_d_phi_coil * d_X_d_phi_coil + 
+   d_Y_d_phi_coil * d_Y_d_phi_coil + 
+   d_Z_d_phi_coil * d_Z_d_phi_coil)
+
+print('R_coil.shape:', R_coil.shape)
+
+mu0 = 4 * np.pi * (1.0e-7)
+# Pre-factor in the Biot-Savart integral:
+#factor = d_phi * mu0 / (4 * np.pi)
+#factor = d_phi / (4 * np.pi)
+factor = d_phi
+# Hanson says they use "unrationalized units", which means no 4pi in Biot-Savart.
+
+# For details of scipy.integrate.solve_ivp see https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html
+
+def BR_Bphi_BZ_single(R, phi, Z):
+   """
+   This subroutine only works for single points as arguments.
+   """
+   print("BR_Bphi_BZ called with R=%g, phi=%g, Z=%g" % (R, phi, Z))
+
+   cosphi = np.cos(phi)
+   sinphi = np.sin(phi)
+   X = R * cosphi
+   Y = R * sinphi
+
+   dX = X - X_coil
+   dY = Y - Y_coil
+   dZ = Z - Z_coil
+
+   r2 = dX * dX + dY * dY + dZ * dZ
+   one_over_r3 = 1 / (r2 * np.sqrt(r2))
+
+   # Biot-Savart law:
+   BX = factor * np.sum(I * np.sum(d_l_d_phi_coil * one_over_r3 * (d_Y_d_phi_coil * dZ - d_Z_d_phi_coil * dY), axis=0))
+   BY = factor * np.sum(I * np.sum(d_l_d_phi_coil * one_over_r3 * (d_Z_d_phi_coil * dX - d_X_d_phi_coil * dZ), axis=0))
+   BZ = factor * np.sum(I * np.sum(d_l_d_phi_coil * one_over_r3 * (d_X_d_phi_coil * dY - d_Y_d_phi_coil * dX), axis=0))
+
+   # Convert to cylindrical components:
+   BR   =  BX * cosphi + BY * sinphi
+   Bphi = -BX * sinphi + BY * cosphi + B0 * R0 / R
+   # In that last term we add the toroidal field.
+
+   return (BR, Bphi, BZ)
+
+def BR_Bphi_BZ(R, phi, Z):
+   """
+   This version allows R, phi, and Z to be 1D arrays. They must have the same size.
+   """
+   assert R.shape == phi.shape
+   assert Z.shape == phi.shape
+   BR = np.zeros(R.shape)
+   Bphi = np.zeros(R.shape)
+   BZ = np.zeros(R.shape)
+   for j in range(len(R)):
+      BR[j], Bphi[j], BZ[j] = BR_Bphi_BZ_single(R[j], phi[j], Z[j])
+   return (BR, Bphi, BZ)
+
+
+def d_RZ_d_phi(phi, RZ):
+   R = RZ[0]
+   Z = RZ[1]
+   #print("d_RZ_d_phi called with R=%g, phi=%g, Z=%g" % (R, phi, Z))
+
+   cosphi = np.cos(phi)
+   sinphi = np.sin(phi)
+   X = R * cosphi
+   Y = R * sinphi
+
+   dX = X - X_coil
+   dY = Y - Y_coil
+   dZ = Z - Z_coil
+
+   r2 = dX * dX + dY * dY + dZ * dZ
+   one_over_r3 = 1 / (r2 * np.sqrt(r2))
+
+   # Biot-Savart law:
+   BX = factor * np.sum(I * np.sum(d_l_d_phi_coil * one_over_r3 * (d_Y_d_phi_coil * dZ - d_Z_d_phi_coil * dY), axis=0))
+   BY = factor * np.sum(I * np.sum(d_l_d_phi_coil * one_over_r3 * (d_Z_d_phi_coil * dX - d_X_d_phi_coil * dZ), axis=0))
+   BZ = factor * np.sum(I * np.sum(d_l_d_phi_coil * one_over_r3 * (d_X_d_phi_coil * dY - d_Y_d_phi_coil * dX), axis=0))
+
+   # Convert to cylindrical components:
+   BR   =  BX * cosphi + BY * sinphi
+   Bphi = -BX * sinphi + BY * cosphi + B0 * R0 / R
+   # In that last term we add the toroidal field.
+
+   # Convert the B vector to the field line equations:
+   d_R_d_phi = R * BR / Bphi
+   d_Z_d_phi = R * BZ / Bphi
+   return [d_R_d_phi, d_Z_d_phi]
+
+
+def Z_crosses_0(phi, RZ):
+   return RZ[1]
+
+Z_crosses_0.terminal = True
+
+# Plot components of the magnetic field:
+if False:
+   plt.figure(figsize=(14,7))
+   num_rows = 2
+   num_cols = 5
+   N = 12
+
+   for j_phi in range(5):
+      phi_shift = 2 * np.pi / 5 * (j_phi / 4.0)
+
+      R = np.linspace(0.9,1.1,N)
+      Z = np.zeros(R.shape)
+      phi = np.zeros(R.shape) + phi_shift
+
+      BR, Bphi, BZ = BR_Bphi_BZ(R, phi, Z)
+      print("For R scan:")
+      print("BR   =", BR)
+      print("Bphi =", Bphi)
+      print("BZ   =", BZ)
+      plt.subplot(num_rows, num_cols, j_phi + 1)
+      plt.plot(R, BR  , '.-', label='BR')
+      plt.plot(R, Bphi, '.-', label='Bphi')
+      plt.plot(R, BZ  , '.-', label='BZ')
+      plt.legend(fontsize=8,loc=0)
+      plt.xlabel('R')
+      plt.title('phi = ' + str(phi_shift))
+
+      Z = np.linspace(-0.1, 0.1, N)
+      R = np.zeros(Z.shape) + 0.98
+      phi = np.zeros(Z.shape) + phi_shift
+
+      BR, Bphi, BZ = BR_Bphi_BZ(R, phi, Z)
+      print()
+      print("For Z scan:")
+      print("BR   =", BR)
+      print("Bphi =", Bphi)
+      print("BZ   =", BZ)
+      plt.subplot(num_rows, num_cols, j_phi + 6)
+      plt.plot(Z, BR  , '.-', label='BR')
+      plt.plot(Z, Bphi, '.-', label='Bphi')
+      plt.plot(Z, BZ  , '.-', label='BZ')
+      plt.legend(fontsize=8,loc=0)
+      plt.xlabel('Z')
+      plt.title('phi = ' + str(phi_shift))
+
+   plt.tight_layout()
+   plt.show()
+   exit(0)
+
+   
+
+#############################################################
+# Find the iota profile
+#############################################################
+
+#if mpi_rank == 0:
+if False:
+   r = np.abs(R_iota0 - R_axis)
+
+   iota0_numerical = np.zeros(len(R_iota0))
+   statuss = [999]*len(R_iota0)
+   successes = [999]*len(R_iota0)
+   for j in range(len(R_iota0)):
+      phi_range = [0, 2*np.pi*100]
+      RZ_initial = [R_iota0[j], 0]
+
+      # Not sure if this parameter should be + or -.
+      iota_a = I[0];
+
+      # Idea: we only need to integrate halfway around poloidally.  We
+      # go from Z=0 to the next crossing of Z=0. Then see how much phi
+      # has increased.
+      if RZ_initial[0] > R_axis:
+         if iota_a > 0:
+            Z_crosses_0.direction = -1.0
+         else:
+            Z_crosses_0.direction = 1.0
+      else:
+         if iota_a > 0:
+            Z_crosses_0.direction = 1.0
+         else:
+            Z_crosses_0.direction = -1.0
+
+      solution = solve_ivp(d_RZ_d_phi, phi_range, RZ_initial, events=Z_crosses_0, rtol = rtol, atol = atol)
+
+      print("status:",solution.status)
+      print("success:",solution.success)
+      statuss[j] = solution.status
+      successes[j] = solution.success
+      phi = solution.t
+      R = solution.y[0,:]
+      Z = solution.y[1,:]
+      print("phi:",solution.t)
+      print("[R,Z]:",solution.y)
+      print("R:",R)
+      print("Z:",Z)
+
+      if False:
+         fig = plt.figure(figsize=(14,7))
+         plt.plot(phi,R,'.-',label='R')
+         plt.plot(phi,Z,'.-',label='Z')
+
+         solution2 = solve_ivp(d_RZ_d_phi, phi_range, RZ_initial, events=Z_crosses_0, rtol = rtol/100, atol = atol/100)
+         phi2 = solution2.t
+         R2 = solution2.y[0,:]
+         Z2 = solution2.y[1,:]
+         plt.plot(phi2,R2,':',label='R refined')
+         plt.plot(phi2,Z2,':',label='Z refined')
+
+         plt.legend(fontsize=8,loc=0)
+         plt.xlabel('phi')
+         plt.show()
+
+      # If solve_ivp successfully integrated halfway around poloidally, then the final element of solution.t should tell us iota.
+      if solution.success and (np.abs(Z[-1]) < 1.0e-14):
+         iota0_numerical[j] = np.pi / phi[-1]
+      else:
+         iota0_numerical[j] = np.nan
+
+   print('statuss:',statuss)
+   print('successes:',successes)
+   print("iota0_numerical:",iota0_numerical)
+
+   if not save_PDF:
+      fig = plt.figure(figsize=(14,7))
+      numRows=1
+      numCols=1
+
+      plt.subplot(numRows,numCols,1)
+      plt.plot(R_iota0, iota0_numerical, '.-', label='numerical')
+      plt.xlabel('Initial R')
+      plt.ylabel('iota')
+      plt.title('I=' + str(I))
+      plt.show()
+
+#exit(0)
+
+#############################################################
+# Generate Poincare plot
+#############################################################
+
+N_field_lines = len(R_initial_Poincare) * len(Z_initial_Poincare)
+Poincare_data = [0]*N_field_lines
+j = -1
+for jZ in range(len(Z_initial_Poincare)):
+   for jR in range(len(R_initial_Poincare)):
+      j += 1
+      if j%mpi_N_procs != mpi_rank:
+         continue
+      print('Proc {:4d} is tracing field line {:4d} of {:4d}.'.format(mpi_rank, j, N_field_lines))
+      nfp = m0
+      phi_range = (0, (2*np.pi*N_points)/nfp)
+      phi_to_report = np.arange(N_points) * 2 * np.pi / nfp
+      RZ_initial = [R_initial_Poincare[jR], Z_initial_Poincare[jZ]]
+      solution = solve_ivp(d_RZ_d_phi, phi_range, RZ_initial, t_eval = phi_to_report, rtol = rtol, atol = atol)
+      phi = solution.t
+      R = solution.y[0,:]
+      Z = solution.y[1,:]
+      #print("phi:",solution.t)
+      #print("[R,Z]:",solution.y)
+      #print("R:",R)
+      #print("Z:",Z)
+      Poincare_data[j] = solution.y
+
+# Send results from each processor to the root:
+for j in range(N_field_lines):
+   index = j%mpi_N_procs
+   if index == 0:
+      # Proc 0 did this field line, so no communication is needed
+      temp = 0
+   else:
+      if mpi_rank == 0:
+         print('Root is receiving field line {:5d} from proc {:4d}'.format(j,index))
+         Poincare_data[j] = comm.recv(source = index, tag=index)
+      elif index == mpi_rank:
+         print('Proc {:4d} is sending field line {:5d} to root'.format(mpi_rank, j))
+         comm.send(Poincare_data[j], dest=0, tag=index)
+
+
+if mpi_rank == 0:
+   fig = plt.figure(figsize=(14,7))
+   for j in range(N_field_lines):
+      plt.scatter(Poincare_data[j][0,:], Poincare_data[j][1,:], s=marker_size, edgecolors='none')
+   plt.xlabel('R')
+   plt.ylabel('Z')
+   plt.gca().set_aspect('equal',adjustable='box')
+   # Turn on minor ticks, since it is necessary to get minor grid lines
+   from matplotlib.ticker import AutoMinorLocator
+   plt.gca().xaxis.set_minor_locator(AutoMinorLocator(10))
+   plt.gca().yaxis.set_minor_locator(AutoMinorLocator(10))
+   plt.grid(which='major',linewidth=0.5)
+   plt.grid(which='minor',linewidth=0.15)
+
+   #title_string = 'Dommaschk_m='+str(Dommaschk_m)+', Dommaschk_n='+str(Dommaschk_n)+', Dommaschk_amplitude='+str(Dommaschk_amplitude)\
+   #    +', iota_a='+str(iota_a)+', a='+str(a)+', nfp='+str(nfp)+', Rtol='+str(rtol)+', Atol='+str(atol)+', N_procs='+str(mpi_N_procs)
+   title_string = 'I='+str(I)+', Atol='+str(atol)+', N_procs='+str(mpi_N_procs)
+   plt.figtext(0.5, 0.99, title_string, fontsize=10, ha='center', va='top')
+
+   #filename = 'Poincare_m'+str(Dommaschk_m)+'_n'+str(Dommaschk_n)+'_amplitude'+str(Dommaschk_amplitude) \
+   #    +'_iotaa'+str(iota_a)+'_a'+str(a)+'_nfp'+str(nfp)+'_rtol'+str(rtol)+'_atol'+str(atol) \
+   #    +'_Npoints'+str(N_points)+'_Nlines'+str(N_field_lines)+'_Nprocs'+str(mpi_N_procs)+'.pdf'
+   #print(filename)
+
+   if save_PDF:
+      print('Saving PDF')
+      plt.savefig(filename)
+   else:
+      plt.show()
