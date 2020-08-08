@@ -141,10 +141,11 @@ d_Y_d_phi_coil = R_coil * cosphi + r * sineta * (-m0 / l0) * sinphi
 #d_Z_d_phi_coil = r * coseta * (m0 / l0)
 d_Z_d_phi_coil = -r * coseta * (m0 / l0)
 
-d_l_d_phi_coil = np.sqrt( \
-   d_X_d_phi_coil * d_X_d_phi_coil + 
-   d_Y_d_phi_coil * d_Y_d_phi_coil + 
-   d_Z_d_phi_coil * d_Z_d_phi_coil)
+# This next array is not needed:
+#d_l_d_phi_coil = np.sqrt( \
+#   d_X_d_phi_coil * d_X_d_phi_coil + 
+#   d_Y_d_phi_coil * d_Y_d_phi_coil + 
+#   d_Z_d_phi_coil * d_Z_d_phi_coil)
 
 print('R_coil.shape:', R_coil.shape)
 
@@ -176,9 +177,9 @@ def BR_Bphi_BZ_single(R, phi, Z):
    one_over_r3 = 1 / (r2 * np.sqrt(r2))
 
    # Biot-Savart law:
-   BX = factor * np.sum(I * np.sum(d_l_d_phi_coil * one_over_r3 * (d_Y_d_phi_coil * dZ - d_Z_d_phi_coil * dY), axis=0))
-   BY = factor * np.sum(I * np.sum(d_l_d_phi_coil * one_over_r3 * (d_Z_d_phi_coil * dX - d_X_d_phi_coil * dZ), axis=0))
-   BZ = factor * np.sum(I * np.sum(d_l_d_phi_coil * one_over_r3 * (d_X_d_phi_coil * dY - d_Y_d_phi_coil * dX), axis=0))
+   BX = factor * np.sum(I * np.sum(one_over_r3 * (d_Y_d_phi_coil * dZ - d_Z_d_phi_coil * dY), axis=0))
+   BY = factor * np.sum(I * np.sum(one_over_r3 * (d_Z_d_phi_coil * dX - d_X_d_phi_coil * dZ), axis=0))
+   BZ = factor * np.sum(I * np.sum(one_over_r3 * (d_X_d_phi_coil * dY - d_Y_d_phi_coil * dX), axis=0))
 
    # Convert to cylindrical components:
    BR   =  BX * cosphi + BY * sinphi
@@ -219,9 +220,9 @@ def d_RZ_d_phi(phi, RZ):
    one_over_r3 = 1 / (r2 * np.sqrt(r2))
 
    # Biot-Savart law:
-   BX = factor * np.sum(I * np.sum(d_l_d_phi_coil * one_over_r3 * (d_Y_d_phi_coil * dZ - d_Z_d_phi_coil * dY), axis=0))
-   BY = factor * np.sum(I * np.sum(d_l_d_phi_coil * one_over_r3 * (d_Z_d_phi_coil * dX - d_X_d_phi_coil * dZ), axis=0))
-   BZ = factor * np.sum(I * np.sum(d_l_d_phi_coil * one_over_r3 * (d_X_d_phi_coil * dY - d_Y_d_phi_coil * dX), axis=0))
+   BX = factor * np.sum(I * np.sum(one_over_r3 * (d_Y_d_phi_coil * dZ - d_Z_d_phi_coil * dY), axis=0))
+   BY = factor * np.sum(I * np.sum(one_over_r3 * (d_Z_d_phi_coil * dX - d_X_d_phi_coil * dZ), axis=0))
+   BZ = factor * np.sum(I * np.sum(one_over_r3 * (d_X_d_phi_coil * dY - d_Y_d_phi_coil * dX), axis=0))
 
    # Convert to cylindrical components:
    BR   =  BX * cosphi + BY * sinphi
