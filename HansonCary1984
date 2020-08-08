@@ -34,7 +34,7 @@ I = np.array([-1, 1]) * 0.021
 N_coils = len(I)
 
 # Axis location at phi=0:
-R_axis = 0.98
+R_axis = 0.983
 
 # Initial locations for tracing field lines for the Poincare plot
 R_initial_Poincare = np.linspace(0.8, 1.15, num=128, endpoint=True)
@@ -43,10 +43,10 @@ Z_initial_Poincare = [0]
 # R_iota0 = array of R values at which to compute iota for the unperturbed field.
 #R_iota0 = R_initial_Poincare
 #R_iota0 = np.linspace(0.99, 1.05, num=4, endpoint=True)
-R_iota0 = np.linspace(0.975, 1.05, num=10, endpoint=True)
+R_iota0 = np.linspace(0.97, 1.05, num=10, endpoint=True)
 
 # Number of points to compute for each initial condition for the Poincare plot:
-N_points = 2000
+N_points = 20
 
 # Stop tracing field line if you leave this region:
 Rmin = 0.75
@@ -240,6 +240,26 @@ def Z_crosses_0(phi, RZ):
 
 Z_crosses_0.terminal = True
 
+def R_too_small(phi, RZ):
+   return RZ[0] - Rmin
+
+R_too_small.terminal = True
+
+def R_too_big(phi, RZ):
+   return RZ[0] - Rmax
+
+R_too_big.terminal = True
+
+def Z_too_small(phi, RZ):
+   return RZ[1] - Zmin
+
+Z_too_small.terminal = True
+
+def Z_too_big(phi, RZ):
+   return RZ[1] - Zmax
+
+Z_too_big.terminal = True
+
 # Plot components of the magnetic field:
 if False:
    plt.figure(figsize=(14,7))
@@ -292,7 +312,7 @@ if False:
    
 
 #############################################################
-# Find the iota profile
+# Find the iota profile, method 1 (NOT VALID for this field!!)
 #############################################################
 
 #if mpi_rank == 0:
@@ -378,28 +398,93 @@ if False:
 #exit(0)
 
 #############################################################
-# Generate Poincare plot
+# Find the iota profile, method 2 (which IS valid for this field!!)
 #############################################################
 
-def R_too_small(phi, RZ):
-   return RZ[0] - Rmin
+if True:
+   iota0_numerical = np.zeros(len(R_iota0))
+   statuss = [999]*len(R_iota0)
+   successes = [999]*len(R_iota0)
+   for j in range(len(R_iota0)):
+      phi_range = [0, 2*np.pi*50]
+      RZ_initial = [R_iota0[j], 0]
 
-R_too_small.terminal = True
+      solution = solve_ivp(d_RZ_d_phi, phi_range, RZ_initial, \
+                              events=[R_too_big, R_too_small, Z_too_big, Z_too_small], \
+                              rtol = rtol, atol = atol)
 
-def R_too_big(phi, RZ):
-   return RZ[0] - Rmax
+      print("status:",solution.status)
+      print("success:",solution.success)
+      statuss[j] = solution.status
+      successes[j] = solution.success
+      phi = solution.t
+      R = solution.y[0,:]
+      Z = solution.y[1,:]
+      print("phi:",solution.t)
+      print("[R,Z]:",solution.y)
+      print("R:",R)
+      print("Z:",Z)
+      theta = np.arctan2(Z, R - R_axis)
+      for k in range(1, len(R)):
+         # Handle large increases in theta:
+         if theta[k] - theta[k-1] > np.pi:
+            theta[k:] -= 2 * np.pi
+         # Handle large decreases in theta:
+         if theta[k] - theta[k-1] < -np.pi:
+            theta[k:] += 2 * np.pi
 
-R_too_big.terminal = True
+      if False:
+         fig = plt.figure(figsize=(14,7))
+         plt.subplot(1, 2, 1)
+         plt.plot(phi,R,'.-',label='R')
+         plt.plot(phi,Z,'.-',label='Z')
 
-def Z_too_small(phi, RZ):
-   return RZ[1] - Zmin
+         solution2 = solve_ivp(d_RZ_d_phi, phi_range, RZ_initial, \
+                              events=[R_too_big, R_too_small, Z_too_big, Z_too_small], \
+                              rtol = rtol, atol = atol)
+         phi2 = solution2.t
+         R2 = solution2.y[0,:]
+         Z2 = solution2.y[1,:]
+         plt.plot(phi2,R2,':',label='R refined')
+         plt.plot(phi2,Z2,':',label='Z refined')
 
-Z_too_small.terminal = True
+         plt.legend(fontsize=8,loc=0)
+         plt.xlabel('phi')
 
-def Z_too_big(phi, RZ):
-   return RZ[1] - Zmax
+         plt.subplot(1, 2, 2)
+         plt.plot(phi, theta)
+         plt.xlabel('phi')
+         plt.title('theta')
 
-Z_too_big.terminal = True
+         plt.tight_layout()
+         plt.show()
+
+      # If solve_ivp successfully integrated halfway around poloidally, then the final element of solution.t should tell us iota.
+      if solution.success:
+         iota0_numerical[j] = theta[-1] / phi[-1]
+      else:
+         iota0_numerical[j] = np.nan
+
+   print('statuss:',statuss)
+   print('successes:',successes)
+   print("iota0_numerical:",iota0_numerical)
+
+   if not save_PDF:
+      fig = plt.figure(figsize=(14,7))
+      numRows=1
+      numCols=1
+
+      plt.subplot(numRows,numCols,1)
+      plt.plot(R_iota0, iota0_numerical, '.-', label='numerical')
+      plt.xlabel('Initial R')
+      plt.ylabel('iota')
+      plt.title('I=' + str(I))
+      plt.show()
+      exit(0)
+
+#############################################################
+# Generate Poincare plot
+#############################################################
 
 N_field_lines = len(R_initial_Poincare) * len(Z_initial_Poincare)
 Poincare_data = [0]*N_field_lines
